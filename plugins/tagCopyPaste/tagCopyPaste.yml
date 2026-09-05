@@ -1,16 +1,20 @@
 name: tagCopyPaste
 # requires: CommunityScriptsUILibrary
-description: Adds Copy/Paste buttons to Tags field.
-version: 0.5
+description: Adds Copy/Paste buttons to Tags and Performers fields.
+version: 0.6
 url: https://discourse.stashapp.cc/t/tagcopypaste/1858
 settings:
   createIfNotExists:
-    displayName: Create If Not Exists
+    displayName: Create Tags If Not Exists
     description: If enabled, new tags will be created when pasted list contains entries that do not already exist.
+    type: BOOLEAN
+  createPerformersIfNotExists:
+    displayName: Create Performers If Not Exists
+    description: If enabled, new performers will be created when pasted list contains entries that do not already exist.
     type: BOOLEAN
   requireConfirmation:
     displayName: Require Confirmation
-    description: If enabled, user needs to confirm new tags being created.
+    description: If enabled, user needs to confirm new tags/performers being created.
     type: BOOLEAN
 ui:
   requires:

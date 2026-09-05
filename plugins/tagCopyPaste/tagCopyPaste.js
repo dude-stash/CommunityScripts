@@ -5,20 +5,47 @@
   let pluginSettings = {};
   const defaultPluginSettings = {
     createIfNotExists: false,
+    createPerformersIfNotExists: false,
     requireConfirmation: false,
   };
 
-  // Helper functions for handling array of tags.
-  const getTagNameArray = (tagArray) => tagArray.map((value) => value.name);
-  const getTagNameString = (tagArray) => getTagNameArray(tagArray).join(", ");
-  const sortTagArray = (tagArray) =>
-    tagArray.sort((a, b) => {
-      var aCompStr = a.sort_name ? a.sort_name : a.name;
-      var bCompStr = b.sort_name ? b.sort_name : b.name;
-      return aCompStr.localeCompare(bCompStr);
-    });
+  const TAG_FIELDS = `id, name, sort_name, favorite, description, aliases, image_path, parents {id, name}, stash_ids {endpoint, stash_id, updated_at }`;
+  const PERFORMER_FIELDS = `id, name, disambiguation, alias_list, image_path, birthdate, death_date`;
 
-  async function setupTagCopyPaste() {
+  // Per-entity configuration. Tags and Performers share the copy/paste logic,
+  // they only differ in the GQL calls and the sort order.
+  const entityTypes = {
+    tag: {
+      component: "TagSelect",
+      className: "tagCopyPaste",
+      createSetting: "createIfNotExists",
+      label: "Tags",
+      find: findTagsByName,
+      create: createNewTag,
+      sort: (entityArray) =>
+        entityArray.sort((a, b) => {
+          var aCompStr = a.sort_name ? a.sort_name : a.name;
+          var bCompStr = b.sort_name ? b.sort_name : b.name;
+          return aCompStr.localeCompare(bCompStr);
+        }),
+    },
+    performer: {
+      component: "PerformerSelect",
+      className: "performerCopyPaste",
+      createSetting: "createPerformersIfNotExists",
+      label: "Performers",
+      find: findPerformersByName,
+      create: createNewPerformer,
+      sort: (entityArray) =>
+        entityArray.sort((a, b) => a.name.localeCompare(b.name)),
+    },
+  };
+
+  // Helper functions for handling array of entities.
+  const getNameArray = (entityArray) => entityArray.map((value) => value.name);
+  const getNameString = (entityArray) => getNameArray(entityArray).join(", ");
+
+  async function setupCopyPaste() {
     // Get plugin settings.
     const configSettings = await csLib.getConfiguration("tagCopyPaste", {}); // getConfiguration is from cs-ui-lib.js
     pluginSettings = {
@@ -26,140 +53,154 @@
       ...configSettings,
     };
 
-    // Patch TagSelect to add copy/paste buttons.
-    PluginApi.patch.after("TagSelect", function (props, _, originalComponent) {
-      const copyButtonRef = React.useRef(null);
-      const pasteButtonRef = React.useRef(null);
-      const propsRef = props;
-
-      // Copy Button click handler
-      const copyClickHandler = (event) => {
-        event.preventDefault();
-        handleCopyClick(propsRef.values);
-      };
-
-      // Paste Button click handler
-      const pasteClickHandler = (event) => {
-        event.preventDefault();
-        handlePasteClick(propsRef.onSelect, propsRef.values);
-      };
-
-      React.useEffect(() => {
-        // Not the ideal way to handle this, but it works.
-        // Wait for the buttons to render and then add the onCopy/onPaste handlers to select control DOM element.
-        if (copyButtonRef && copyButtonRef.current) {
-          var mainCopyPasteWrapper =
-            copyButtonRef.current.parentElement.parentElement;
-          var tagInputBox = mainCopyPasteWrapper.querySelector(
-            ".react-select__value-container",
-          );
-
-          const copyEventHandler = (e) => {
-            e.preventDefault();
-            copyButtonRef.current.click();
-          };
-
-          const pasteEventHandler = (e) => {
-            e.preventDefault();
-            pasteButtonRef.current.click();
-          };
-
-          if (tagInputBox) {
-            tagInputBox.addEventListener("copy", copyEventHandler);
-            tagInputBox.addEventListener("paste", pasteEventHandler);
-          }
-        }
-      }, []);
-
-      return React.createElement("div", { className: "tagCopyPaste" }, [
-        React.createElement(
-          "div",
-          {
-            className: "btn-group",
-          },
-          [
-            React.createElement(
-              "button",
-              {
-                type: "button",
-                ref: copyButtonRef,
-                onClick: copyClickHandler,
-                className:
-                  "imageGalleryNav-copyButton btn btn-secondary btn-sm",
-              },
-              "Copy",
-            ),
-            React.createElement(
-              "button",
-              {
-                type: "button",
-                ref: pasteButtonRef,
-                onClick: pasteClickHandler,
-                className:
-                  "imageGalleryNav-pasteButton btn btn-secondary btn-sm",
-              },
-              "Paste",
-            ),
-          ],
-        ),
-        originalComponent,
-      ]);
-    });
+    for (const entityType of Object.values(entityTypes)) {
+      patchSelect(entityType);
+    }
   }
 
-  // Handle copy click. Return delimited list of current tags.
+  // Patch a *Select component to add copy/paste buttons.
+  function patchSelect(entityType) {
+    PluginApi.patch.after(
+      entityType.component,
+      function (props, _, originalComponent) {
+        const copyButtonRef = React.useRef(null);
+        const pasteButtonRef = React.useRef(null);
+        const propsRef = props;
+
+        // Copy Button click handler
+        const copyClickHandler = (event) => {
+          event.preventDefault();
+          handleCopyClick(propsRef.values ?? []);
+        };
+
+        // Paste Button click handler
+        const pasteClickHandler = (event) => {
+          event.preventDefault();
+          handlePasteClick(entityType, propsRef.onSelect, propsRef.values ?? []);
+        };
+
+        React.useEffect(() => {
+          // Not the ideal way to handle this, but it works.
+          // Wait for the buttons to render and then add the onCopy/onPaste handlers to select control DOM element.
+          if (copyButtonRef && copyButtonRef.current) {
+            var mainCopyPasteWrapper =
+              copyButtonRef.current.parentElement.parentElement;
+            var inputBox = mainCopyPasteWrapper.querySelector(
+              ".react-select__value-container",
+            );
+
+            const copyEventHandler = (e) => {
+              e.preventDefault();
+              copyButtonRef.current.click();
+            };
+
+            const pasteEventHandler = (e) => {
+              e.preventDefault();
+              pasteButtonRef.current.click();
+            };
+
+            if (inputBox) {
+              inputBox.addEventListener("copy", copyEventHandler);
+              inputBox.addEventListener("paste", pasteEventHandler);
+            }
+          }
+        }, []);
+
+        // Selects that only hold a single value (merge dialogs, a marker's
+        // primary tag) have nothing useful to paste a list into.
+        if (props.isMulti === false) return originalComponent;
+
+        return React.createElement(
+          "div",
+          { className: `csCopyPaste ${entityType.className}` },
+          [
+            React.createElement(
+              "div",
+              {
+                className: "btn-group",
+              },
+              [
+                React.createElement(
+                  "button",
+                  {
+                    type: "button",
+                    ref: copyButtonRef,
+                    onClick: copyClickHandler,
+                    className:
+                      "imageGalleryNav-copyButton btn btn-secondary btn-sm",
+                  },
+                  "Copy",
+                ),
+                React.createElement(
+                  "button",
+                  {
+                    type: "button",
+                    ref: pasteButtonRef,
+                    onClick: pasteClickHandler,
+                    className:
+                      "imageGalleryNav-pasteButton btn btn-secondary btn-sm",
+                  },
+                  "Paste",
+                ),
+              ],
+            ),
+            originalComponent,
+          ],
+        );
+      },
+    );
+  }
+
+  // Handle copy click. Return delimited list of current entries.
   async function handleCopyClick(propValues) {
-    // Get tags from input box
+    // Get entries from input box
     // join as comma delimited list
-    const tagList = getTagNameString(propValues);
-    navigator.clipboard.writeText(tagList);
+    navigator.clipboard.writeText(getNameString(propValues));
   }
 
   // Handle paste click.
-  async function handlePasteClick(onSelect, propValues) {
-    // Parse tag list from comma delimited string.
-    const tagInput = await navigator.clipboard.readText();
-    var inputTagList = tagInput
+  async function handlePasteClick(entityType, onSelect, propValues) {
+    // Parse list from comma and/or newline delimited string.
+    const input = await navigator.clipboard.readText();
+    var inputNameList = input
       .split(/\r?\n|\r|,/)
       .map((s) => s.trim())
       .filter((text) => text !== ""); // do de-duplication later
 
-    // Get tags from input box and also add to tag list.
-    const existingTagList = getTagNameArray(propValues);
+    // Get entries from input box and also add to the list.
+    const existingNameList = getNameArray(propValues);
 
-    inputTagList = [...new Set([...inputTagList, ...existingTagList])].sort();
+    inputNameList = [...new Set([...inputNameList, ...existingNameList])].sort();
 
-    var missingTagNames = [];
-    var existingTags = [];
-    var tagUpdateList = [];
+    var missingNames = [];
+    var updateList = [];
 
-    // Search for tag ID for each tag. If exists, add to tag ID list. If not exists, create new tag and add to tag ID list.
-    for (const inputTag of inputTagList) {
-      const tagID = await getTagByName(inputTag);
-      if (tagID && tagID.length) {
-        existingTags.push(inputTag);
-        tagUpdateList.push(tagID[0]);
+    // Look up each name. If it exists, add it to the update list. If not, remember it for creation.
+    for (const inputName of inputNameList) {
+      const matches = await entityType.find(inputName);
+      if (matches && matches.length) {
+        updateList.push(matches[0]);
       } else {
-        missingTagNames.push(inputTag);
+        missingNames.push(inputName);
       }
     }
 
-    // Create missing tags if enabled. Prompt user to confirm if confirmation option is also enabled.
-    const missingTagsStr = missingTagNames.join(", ");
-    const msg = `Missing Tags that will be created:\n${missingTagsStr}\n\nContinue?`;
+    // Create missing entries if enabled. Prompt user to confirm if confirmation option is also enabled.
+    const missingStr = missingNames.join(", ");
+    const msg = `Missing ${entityType.label} that will be created:\n${missingStr}\n\nContinue?`;
     if (
-      pluginSettings.createIfNotExists &&
-      missingTagNames.length &&
+      pluginSettings[entityType.createSetting] &&
+      missingNames.length &&
       (!pluginSettings.requireConfirmation || confirm(msg))
     ) {
-      for (const missingTagName of missingTagNames) {
-        const newTag = await createNewTag(missingTagName);
-        if (newTag != null) tagUpdateList.push(newTag);
+      for (const missingName of missingNames) {
+        const created = await entityType.create(missingName);
+        if (created != null) updateList.push(created);
       }
     }
 
-    // Update TagSelect control with new tag list.
-    onSelect(sortTagArray(tagUpdateList));
+    // Update the Select control with the new list.
+    onSelect(entityType.sort(updateList));
   }
 
   // *** GQL Calls ***
@@ -168,7 +209,7 @@
   // Return newly created tag object.
   async function createNewTag(tagName) {
     const variables = { input: { name: tagName } };
-    const query = `mutation CreateTag($input:TagCreateInput!) { tagCreate(input: $input) { id, name, sort_name, favorite, description, aliases, image_path, parents {id, name}, stash_ids {endpoint, stash_id, updated_at } } }`;
+    const query = `mutation CreateTag($input:TagCreateInput!) { tagCreate(input: $input) { ${TAG_FIELDS} } }`;
     return await csLib
       .callGQL({ query, variables })
       .then((data) => data.tagCreate);
@@ -176,18 +217,43 @@
 
   // Find Tag by name/alias.
   // Return matched list of tag objects.
-  async function getTagByName(tagName) {
+  async function findTagsByName(tagName) {
     const tagFilter = {
       name: { value: tagName, modifier: "EQUALS" },
       OR: { aliases: { value: tagName, modifier: "EQUALS" } },
     };
     const findFilter = { per_page: -1, sort: "name" };
     const variables = { tag_filter: tagFilter, filter: findFilter };
-    const query = `query ($tag_filter: TagFilterType!, $filter: FindFilterType!) { findTags(filter: $filter, tag_filter: $tag_filter) { tags { id, name, sort_name, favorite, description, aliases, image_path, parents {id, name}, stash_ids {endpoint, stash_id, updated_at } } } }`;
+    const query = `query ($tag_filter: TagFilterType!, $filter: FindFilterType!) { findTags(filter: $filter, tag_filter: $tag_filter) { tags { ${TAG_FIELDS} } } }`;
     return await csLib
       .callGQL({ query, variables })
       .then((data) => data.findTags.tags);
   }
 
-  setupTagCopyPaste();
+  // Create new performer.
+  // Return newly created performer object.
+  async function createNewPerformer(performerName) {
+    const variables = { input: { name: performerName } };
+    const query = `mutation CreatePerformer($input:PerformerCreateInput!) { performerCreate(input: $input) { ${PERFORMER_FIELDS} } }`;
+    return await csLib
+      .callGQL({ query, variables })
+      .then((data) => data.performerCreate);
+  }
+
+  // Find Performer by name/alias.
+  // Return matched list of performer objects.
+  async function findPerformersByName(performerName) {
+    const performerFilter = {
+      name: { value: performerName, modifier: "EQUALS" },
+      OR: { aliases: { value: performerName, modifier: "EQUALS" } },
+    };
+    const findFilter = { per_page: -1, sort: "name" };
+    const variables = { performer_filter: performerFilter, filter: findFilter };
+    const query = `query ($performer_filter: PerformerFilterType!, $filter: FindFilterType!) { findPerformers(filter: $filter, performer_filter: $performer_filter) { performers { ${PERFORMER_FIELDS} } } }`;
+    return await csLib
+      .callGQL({ query, variables })
+      .then((data) => data.findPerformers.performers);
+  }
+
+  setupCopyPaste();
 })();

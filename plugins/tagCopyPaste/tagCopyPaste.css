@@ -2,9 +2,8 @@ div.multi-set {
   position: relative;
 }
 
-div.modal-content div.tagCopyPaste div.btn-group {
+div.modal-content div.csCopyPaste div.btn-group {
   position: absolute;
   top:0;
   right:0;
 }
-
