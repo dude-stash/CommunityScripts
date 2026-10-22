@@ -2,6 +2,7 @@ import stashapi.log as log
 from stashapi.stashapp import StashInterface
 import sys
 import json
+import urllib3
 
 PERFORMER_PAGE_SIZE = 100
 SCENE_UPDATE_BATCH = 1000
@@ -142,7 +143,9 @@ def processScene(scene: dict):
 
 json_input = json.loads(sys.stdin.read())
 FRAGMENT_SERVER = json_input["server_connection"]
-stash = StashInterface(FRAGMENT_SERVER)
+# Stash connects plugins to itself on 127.0.0.1, which an HTTPS certificate never covers
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+stash = StashInterface(FRAGMENT_SERVER, verify_ssl=False)
 config = stash.get_configuration()
 
 settings = {
